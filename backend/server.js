@@ -4,6 +4,7 @@ const pdf = require("pdf-parse");
 const xlsx = require("xlsx");
 const path = require("path");
 const fs = require("fs");
+const cors = require('cors');
 
 const app = express();
 const upload = multer({
@@ -18,8 +19,11 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled Rejection:', error);
 });
 
+// Add CORS configuration before routes
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
 // Move these to the top, before any routes
-app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -396,7 +400,7 @@ const parsePDF = async (pdfBuffer) => {
   
   // Calculate batch if we have semester and date
   const batch = examDate ? getBatch(semester, examDate) : null;
-
+  
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
@@ -568,152 +572,207 @@ const generateDepartmentAnalysis = (students, batch) => {
 
 // Function to generate Excel file
 const generateExcel = (data) => {
-  const { semester, examType, batch, departmentData } = data;
   const workbook = xlsx.utils.book_new();
-
-  // Helper function to create safe sheet names
-  const createSafeSheetName = (deptName) => {
-    const deptCodes = {
-      'COMPUTER SCIENCE & ENGINEERING': 'CSE',
-      'CIVIL ENGINEERING': 'CE',
-      'MECHANICAL ENGINEERING': 'ME',
-      'ELECTRICAL AND ELECTRONICS ENGINEERING': 'EEE',
-      'ELECTRONICS & COMMUNICATION ENGG': 'ECE',
-      'CHEMICAL ENGINEERING': 'CHE',
-      'PRODUCTION ENGINEERING': 'PE',
-      'OTHER': 'OTH'
-    };
-    return deptCodes[deptName] || deptName.split(' ').map(word => word[0]).join('').substring(0, 3);
-  };
+  const { semester, examType, batch, departmentData } = data;
 
   Object.entries(departmentData).forEach(([dept, students]) => {
-    const analysis = generateDepartmentAnalysis(students, batch);
-    const sheetName = createSafeSheetName(dept);
+    try {
+      // Create a safe sheet name
+      const sheetName = dept.substring(0, 31).replace(/[\[\]\*\/\\\?]/g, '');
 
-    // Separate regular and supplementary students
-    const regularStudents = students.filter(student => isRegularBatch(student.registerNo, batch));
-    const supplementaryStudents = students.filter(student => !isRegularBatch(student.registerNo, batch));
+      // Filter regular and supplementary students
+      const regularStudents = students.filter(student => {
+        const match = student.registerNo.match(/(?:[A-Z]+)?(\d{2})[A-Z]{2}\d{3}/);
+        return match && match[1] === batch.toString();
+      });
+
+      const supplementaryStudents = students.filter(student => {
+        const match = student.registerNo.match(/(?:[A-Z]+)?(\d{2})[A-Z]{2}\d{3}/);
+        return !match || match[1] !== batch.toString();
+      });
 
     // Get all subject codes
     const subjectCodes = new Set();
-    students.forEach((student) => {
-      Object.keys(student).forEach((key) => {
-        if (
-          key !== "registerNo" &&
-          key !== "department" &&
-          key !== "SGPA" &&
-          key !== "FailedSubjects" &&
-          key !== "analysis"
-        ) {
+      students.forEach(student => {
+        Object.keys(student).forEach(key => {
+          if (!['registerNo', 'SGPA', 'department', 'FailedSubjects'].includes(key)) {
           subjectCodes.add(key);
         }
       });
     });
+      const sortedSubjectCodes = Array.from(subjectCodes).sort();
 
-    // Create headers with credits info
-    const headers = ["Register No", 
-      ...Array.from(subjectCodes).map(code => {
-        const credit = SUBJECT_CREDITS[code];
-        const isNonCredit = NON_CREDIT_COURSES.includes(code);
-        if (isNonCredit) {
-          return `${code}* (NC)`;
-        } else if (credit !== undefined) {
-          return `${code} (${credit})`;
-        } else {
-          return code; // Just show the code without credits if undefined
-        }
-      }), 
-      "SGPA", "Failed Subjects"
-    ];
+      // Create worksheet data
+      const wsData = [
+        [`${dept} - ${semester} ${examType} Examination`],
+        [`Regular Batch: 20${batch}`],
+        [],
+        // Regular Students Section
+        ['Regular Students'],
+        ['Register No', ...sortedSubjectCodes, 'SGPA', 'Failed Subjects']
+      ];
 
-    // Create student data
-    const studentData = students.map((student) => {
+      // Add regular student data
+      regularStudents.forEach(student => {
       const row = [student.registerNo];
-      Array.from(subjectCodes).forEach((code) => {
-        row.push(student[code] || "-");
+        sortedSubjectCodes.forEach(code => {
+          row.push(student[code] || '-');
+        });
+        row.push(
+          typeof student.SGPA === 'number' ? student.SGPA.toFixed(2) : '-',
+          student.FailedSubjects || '-'
+        );
+        wsData.push(row);
       });
-      row.push(student.SGPA, student.FailedSubjects);
-      return row;
-    });
 
-    // Modify the analysis data to include separate regular/supplementary sections
-    const analysisData = [
-      [], // Empty row for separation
-      ["Department Analysis"],
-      ["Total Students", analysis.totalStudents],
-      ["Regular Batch Students", analysis.regularStudents],
-      ["Supplementary Students", analysis.supplementaryStudents],
-      [],
-      ["Regular Batch Analysis (20" + batch + ")"],
-      ["Pass Count", analysis.regular.passCount],
-      ["Fail Count", analysis.regular.failCount],
-      ["Pass Percentage", `${analysis.regular.passPercentage}%`],
-      ["Average SGPA", analysis.regular.averageSGPA],
-      [],
-      ["Overall Analysis (Including Supplementary)"],
-      ["Pass Count", analysis.overall.passCount],
-      ["Fail Count", analysis.overall.failCount],
-      ["Average SGPA", analysis.overall.averageSGPA],
-      [],
-      ["Regular Batch Students"],
-      ["Register No", "SGPA", "Failed Subjects"],
-      ...regularStudents.map(student => [student.registerNo, student.SGPA, student.FailedSubjects]),
-      [],
-      ["Supplementary Students"],
-      ["Register No", "SGPA", "Failed Subjects"],
-      ...supplementaryStudents.map(student => [student.registerNo, student.SGPA, student.FailedSubjects]),
-      [],
-      ["Toppers (SGPA >= 9.0)"],
-      ["Register No", "SGPA", "Batch"],
-      ...students
-        .filter(student => student.SGPA >= 9.0)
+      // Add Regular Batch Analysis
+      const passCount = regularStudents.filter(s => !s.FailedSubjects).length;
+      const avgSGPA = regularStudents.reduce((acc, s) => acc + (s.SGPA || 0), 0) / regularStudents.length;
+
+      wsData.push(
+        [],
+        ['Regular Batch Analysis'],
+        ['Total Regular Students', regularStudents.length],
+        ['Pass Count', passCount],
+        ['Fail Count', regularStudents.length - passCount],
+        ['Pass Percentage', `${((passCount / regularStudents.length) * 100).toFixed(2)}%`],
+        ['Average SGPA', avgSGPA.toFixed(2)],
+        []
+      );
+
+      // Add Regular Batch Toppers (SGPA >= 9.0)
+      wsData.push(
+        ['Regular Batch Toppers (SGPA ≥ 9.0)'],
+        ['Register No', 'SGPA', 'Failed Subjects']
+      );
+      regularStudents
+        .filter(s => s.SGPA >= 9.0)
         .sort((a, b) => b.SGPA - a.SGPA)
-        .map(student => [
-          student.registerNo, 
-          student.SGPA, 
-          isRegularBatch(student.registerNo, batch) ? 'Regular' : 'Supplementary'
-        ]),
-    ];
+        .forEach(student => {
+          wsData.push([
+            student.registerNo,
+            student.SGPA.toFixed(2),
+            student.FailedSubjects || '-'
+          ]);
+        });
 
-    // Add grade distribution
-    analysisData.push(
-      [],
-      ["Grade Distribution"],
-      ["Grade", "Count"],
-      ...Object.entries(analysis.gradeDistribution),
-      [],
-      ["Subject-wise Analysis"],
-      ["Subject", "Pass Count", "Fail Count", "Pass %"]
-    );
+      // Add Subject-wise Analysis
+      wsData.push(
+        [],
+        ['Subject-wise Analysis'],
+        ['Subject Code', 'Total Students', 'Pass Count', 'Fail Count', 'Pass Percentage']
+      );
 
-    // Add subject-wise analysis
-    Object.entries(analysis.subjectWiseAnalysis).forEach(([subject, data]) => {
-      const passPercentage = ((data.passCount / (data.passCount + data.failCount)) * 100).toFixed(2);
-      analysisData.push([subject, data.passCount, data.failCount, `${passPercentage}%`]);
-    });
+      sortedSubjectCodes.forEach(code => {
+        const studentsWithSubject = regularStudents.filter(s => s[code]);
+        const subjectPassCount = studentsWithSubject.filter(s => 
+          !['F', 'FE', 'Absent'].includes(s[code])
+        ).length;
+        const subjectFailCount = studentsWithSubject.length - subjectPassCount;
+        const passPercentage = (subjectPassCount / studentsWithSubject.length) * 100;
 
-    // Combine all data
-    const allData = [
-      [`${dept.toUpperCase()} - ${semester}`, `${examType} Examination`, `Regular Batch: 20${batch}`],
-      [], // Empty row
-      headers,
-      ...studentData,
-      ...analysisData,
-      [],
-      ["Note: * indicates non-credit course (NC)"],
-      ["Non-credit courses:", NON_CREDIT_COURSES.join(", ")],
-      [],
-      ["SGPA = Σ(Grade points × Course credits) / Σ(Course credits)"],
-    ];
+        wsData.push([
+          code,
+          studentsWithSubject.length,
+          subjectPassCount,
+          subjectFailCount,
+          `${passPercentage.toFixed(2)}%`
+        ]);
+      });
 
-    const ws = xlsx.utils.aoa_to_sheet(allData);
+      // Add Supplementary Students Section
+      wsData.push(
+        [],
+        ['Supplementary Students'],
+        ['Register No', ...sortedSubjectCodes, 'SGPA', 'Failed Subjects']
+      );
+
+      supplementaryStudents.forEach(student => {
+        const row = [student.registerNo];
+        sortedSubjectCodes.forEach(code => {
+          row.push(student[code] || '-');
+        });
+        row.push(
+          typeof student.SGPA === 'number' ? student.SGPA.toFixed(2) : '-',
+          student.FailedSubjects || '-'
+        );
+        wsData.push(row);
+      });
+
+      // Add Grade Distribution
+      wsData.push(
+        [],
+        ['Grade Distribution (Regular Batch)'],
+        ['Grade', 'Count', 'Percentage']
+      );
+
+      const grades = ['S', 'A+', 'A', 'B+', 'B', 'C+', 'C', 'D', 'P', 'F', 'FE', 'Absent'];
+      const gradeCount = {};
+      let totalGrades = 0;
+
+      regularStudents.forEach(student => {
+        sortedSubjectCodes.forEach(code => {
+          if (student[code]) {
+            gradeCount[student[code]] = (gradeCount[student[code]] || 0) + 1;
+            totalGrades++;
+          }
+        });
+      });
+
+      grades.forEach(grade => {
+        if (gradeCount[grade]) {
+          wsData.push([
+            grade,
+            gradeCount[grade],
+            `${((gradeCount[grade] / totalGrades) * 100).toFixed(2)}%`
+          ]);
+        }
+      });
+
+      // Create worksheet with formatting
+      const ws = xlsx.utils.aoa_to_sheet(wsData);
+
+      // Set column widths
+      ws['!cols'] = [
+        { width: 15 }, // Register No
+        ...sortedSubjectCodes.map(() => ({ width: 10 })), // Subject codes
+        { width: 10 }, // SGPA
+        { width: 30 }  // Failed Subjects
+      ];
+
+      // Add some basic styling
+      for (let i = 0; i < wsData.length; i++) {
+        if (wsData[i][0] && typeof wsData[i][0] === 'string' && 
+            (wsData[i][0].includes('Analysis') || 
+             wsData[i][0].includes('Students') || 
+             wsData[i][0].includes('Toppers') || 
+             wsData[i][0].includes('Distribution'))) {
+          // Make headers bold by using a different cell format
+          const range = xlsx.utils.encode_range({
+            s: { c: 0, r: i },
+            e: { c: wsData[i].length - 1, r: i }
+          });
+          ws['!merges'] = ws['!merges'] || [];
+          ws['!merges'].push(xlsx.utils.decode_range(range));
+        }
+      }
+
+      // Add the worksheet to workbook
     xlsx.utils.book_append_sheet(workbook, ws, sheetName);
+
+    } catch (error) {
+      console.error(`Error processing department ${dept}:`, error);
+    }
   });
+
+  if (workbook.SheetNames.length === 0) {
+    throw new Error('No valid sheets could be generated');
+  }
 
   return workbook;
 };
 
-// Add a test endpoint at the top of your routes
+// Add a test endpoint to verify server is running
 app.get('/test', (req, res) => {
   res.json({ message: 'Server is running' });
 });
@@ -722,69 +781,79 @@ app.get('/test', (req, res) => {
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).send("No file uploaded.");
+      return res.status(400).json({ error: "No file uploaded." });
     }
     
     if (!req.file.mimetype || !req.file.mimetype.includes('pdf')) {
-      return res.status(400).send("Uploaded file must be a PDF.");
+      return res.status(400).json({ error: "Uploaded file must be a PDF." });
     }
 
     const pdfBuffer = req.file.buffer;
     
-    let parsedData;
     try {
-      parsedData = await parsePDF(pdfBuffer);
+      const parsedData = await parsePDF(pdfBuffer);
       
       // Validate parsed data
       if (!parsedData.departmentData || Object.keys(parsedData.departmentData).length === 0) {
         throw new Error("No valid data could be extracted from the PDF");
       }
 
-      // Check if we have student data
-      const hasStudents = Object.values(parsedData.departmentData).some(dept => dept.length > 0);
-      if (!hasStudents) {
-        throw new Error("No student records found in the PDF");
-      }
-
-      // Validate each student has required fields
-      Object.values(parsedData.departmentData).forEach(students => {
-        students.forEach(student => {
-          if (!student.registerNo || !student.department) {
-            throw new Error("Invalid student data found");
-          }
-        });
-      });
+      // Send the parsed data as JSON
+      res.json(parsedData);
 
     } catch (error) {
       console.error("PDF parsing error:", error);
-      return res.status(400).send(`Unable to parse PDF file: ${error.message}`);
+      res.status(400).json({ error: `Unable to parse PDF file: ${error.message}` });
     }
-
-    const workbook = generateExcel(parsedData);
-
-    // Generate filename with semester
-    const date = new Date().toISOString().split('T')[0];
-    const fileName = `results_${parsedData.semester}_${date}.xlsx`;
-
-    // Set proper headers for Excel file download
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-
-    // Write to buffer and send
-    const buffer = xlsx.write(workbook, { 
-      type: 'buffer',
-      bookType: 'xlsx',
-    });
-
-    // Send the buffer
-    res.send(buffer);
 
   } catch (error) {
     console.error("Error processing PDF:", error);
-    res.status(500).send(`Error processing PDF: ${error.message}`);
+    res.status(500).json({ error: `Error processing PDF: ${error.message}` });
   }
+});
+
+// Modify the Excel generation endpoint
+app.post("/generate-excel", async (req, res) => {
+  try {
+    console.log("Received request for Excel generation");
+    const data = req.body;
+    
+    if (!data || !data.departmentData) {
+      console.error("Invalid data received:", data);
+      return res.status(400).json({ error: "Invalid data provided" });
+    }
+
+    console.log("Generating Excel for semester:", data.semester);
+    const workbook = generateExcel(data);
+
+    // Write to buffer
+    const buffer = xlsx.write(workbook, { 
+      type: 'buffer',
+      bookType: 'xlsx',
+      bookSST: false
+    });
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=results_${data.semester}.xlsx`);
+    res.setHeader('Content-Length', buffer.length);
+
+    // Send the buffer
+    res.status(200).send(buffer);
+
+  } catch (error) {
+    console.error("Error generating Excel:", error);
+    res.status(500).json({ error: "Failed to generate Excel file" });
+  }
+});
+
+// Add this after your routes
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    error: 'Something broke!',
+    message: err.message
+  });
 });
 
 // Update the server start to include error handling
