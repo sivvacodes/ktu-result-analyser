@@ -1,10 +1,11 @@
+//node server.js
+//npm start
 const express = require("express");
 const multer = require("multer");
 const pdf = require("pdf-parse");
 const xlsx = require("xlsx");
 const path = require("path");
 const fs = require("fs");
-const cors = require('cors');
 
 const app = express();
 const upload = multer({
@@ -19,11 +20,8 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled Rejection:', error);
 });
 
-// Add CORS configuration before routes
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-
 // Move these to the top, before any routes
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -50,6 +48,7 @@ const GRADE_POINTS = {
   'P': 5.5,   // Pass
   'F': 0,     // Fail
   'FE': 0,    // Fail due to eligibility
+  'I': 0,     // Incomplete
   'Absent': 0
 };
 
@@ -69,173 +68,15 @@ const NON_CREDIT_COURSES = [
   'HUN101', 'HUT102', 'MCN201', 'MCN202', 'MCN301', 'MCN401'
 ];
 
-// Keep only the originally defined subject credits
+// Add subject credits mapping
 const SUBJECT_CREDITS = {
-//s2 all batches
-'MAT102': 4,
-'CYT100': 4,
-'EST110': 3,
-'EST130': 4,
-'EST102': 4,
-'PHL120': 1,
-'CYL120': 1,
-'ESL120': 1,
-'ESL130': 1,
-'PHT100': 4,
-'PHT110': 4,
-'EST100': 3,
-'EST120': 4,
-    
-
-//s3 cse
-  'MAT203':4,
-  'CST201':4,
-  'CST203':4,
-  'CST205':4,
-  'EST200':2,
-  'CSL201':2,
-  'CSL203':2,
-//s3 eee
-  'MAT201':4,
-  'EET201':4,
-  'EET203':4,
-  'EET205':4,
-  'HUT200':2,
-  'EEL201':2,
-  'EEL203':2,
-//s3 ece
- 'MAT201':4,
- 'ECT201':4,
- 'ECT203':4,
- 'ECT205':4,
- 'EST200':2,
- 'HUT200':2,
- 'ECL201':2,
- 'ECL203':2,
-//s3 me
- 'MAT201':4,
- 'MET201':4,
- 'MET203':4,
- 'MET205':4,
- 'EST200':2,
- 'HUT200':2,
- 'MEL201':2,
- 'MEL203':2,
-//s3 ce
- 'MAT201':4,
- 'CET201':4,
- 'CET203':4,
- 'CET205':4,
- 'EST200':2,
- 'HUT200':2,
- 'CEL201':2,
- 'CEL203':2,
-//s3 che
-'MAT201':4,
-'CHT201':4,
-'CHT203':4,
-'CHT205':4,
-'EST200':2,
-'HUT200':2,
-'CHL201':2,
-'CHL203':2,
-
-//s3 pe
-'MAT201':4,
-'PET201':4,
-'PET203':4,
-'PET205':4,
-'EST200':2,
-'HUT200':2,
-'PEL201':2,
-'PEL203':2,
-
-//s4 cse
   'CST202': 4,
   'CST204': 4,
   'CST206': 4,
   'EST200': 2,
   'CSL202': 2,
-  'CSL204': 2,
+  'CSL206': 2,
   'MAT206': 4,
-
-//s4 eee
-'MAT204': 4,
-'EET202': 4,
-'EET204': 4,
-'EET206': 4,
-'EST200': 2,
-'HUT200':2,
-'EEL202': 2,
-'EEL204': 2,
- 
-//s4 ece
-'MAT204': 4,
-'ECT202': 4,
-'ECT204': 4,
-'ECT206': 4,
-'EST200': 2,
-'HUT200':2,
-'ECL202': 2,
-'ECL204': 2,
-
-//s4 me
-'MAT202': 4,  
-'MET202': 4,
-'MET204': 4,
-'MET206': 4,
-'EST200': 2,
-'HUT200':2,
-'MEL202': 2,
-'MEL204': 2,
-
-//s4 ce
-'MAT202': 4,  
-'CET202': 4,
-'CET204': 4,
-'CET206': 4,
-'EST200': 2,
-'HUT200':2,
-'CEL202': 2,
-'CEL204': 2,
-
-//s4 che
-'MAT202': 4,    
-'CHT202': 4,
-'CHT204': 4,
-'CHT206': 4,
-'EST200': 2,
-'HUT200':2,
-'CHL202': 2,
-'CHL204': 2,
-
-//s4 pe
-'MAT202': 4,  
-'EET212': 4,
-'PET204': 4,
-'PET206': 4,
-'EST200': 2,  
-'HUT200':2,
-'EEL212': 2,
-'PEL204': 2,
-
-
-};
-
-// Add this function after the SUBJECT_CREDITS definition
-const getBatch = (semester, date) => {
-  let year = date.slice(-2);
-  if (semester === "S1") {
-    return Number(year);
-  } else if (semester === "S2" || semester === "S3") {
-    return Number(year) - 1;
-  } else if (semester === "S4" || semester === "S5") {
-    return Number(year) - 2;
-  } else if (semester === "S6" || semester === "S7") {
-    return Number(year) - 3;
-  } else {
-    return Number(year) - 4;
-  }
 };
 
 // Function to get department from register number
@@ -259,8 +100,8 @@ const hasFailed = (student) => {
 
 // Function to calculate SGPA
 const calculateSGPA = (student) => {
-  let totalCreditPoints = 0;  // Σ(Grade points × Course credits)
-  let totalCredits = 0;      // Σ(Course credits)
+  let totalGradePoints = 0;  // Σ(Ci × GPi)
+  let totalCredits = 0;      // ΣCi
 
   Object.entries(student).forEach(([key, grade]) => {
     // Skip non-course properties and non-credit courses
@@ -268,7 +109,7 @@ const calculateSGPA = (student) => {
       key === "registerNo" ||
       key === "SGPA" ||
       key === "department" ||
-      key !== "FailedSubjects" &&
+      key === "FailedSubjects" ||
       key === "analysis" ||
       NON_CREDIT_COURSES.includes(key)
     ) {
@@ -276,36 +117,30 @@ const calculateSGPA = (student) => {
     }
 
     // Get credit value for the course
-    const courseCredits = SUBJECT_CREDITS[key];
-    
-    // Skip if credits are not defined for this course
-    if (typeof courseCredits === 'undefined') {
-      console.warn(`Warning: Credits not defined for course ${key}`);
-      return;
-    }
+    const credits = SUBJECT_CREDITS[key] || 3;  // Default to 3 if not specified
     
     // Get grade points for the grade
     const gradePoints = GRADE_POINTS[grade] || 0;
     
-    // Calculate (Grade points × Course credits) for this course
-    const creditPoints = gradePoints * courseCredits;
+    // Calculate Ci × GPi for this course
+    const courseGradePoints = credits * gradePoints;
     
     // Add to totals
-    totalCreditPoints += creditPoints;
-    totalCredits += courseCredits;
+    totalGradePoints += courseGradePoints;
+    totalCredits += credits;
 
     // Debug logging
-    console.log(`Course: ${key}, Credits: ${courseCredits}, Grade: ${grade}, Grade Points: ${gradePoints}, Credit Points: ${creditPoints}`);
+    console.log(`Course: ${key}, Credits: ${credits}, Grade: ${grade}, Points: ${gradePoints}, Course GP: ${courseGradePoints}`);
   });
 
-  // Calculate SGPA = Σ(Grade points × Course credits) / Σ(Course credits)
-  // Round to 2 decimal places
+  // Calculate SGPA = Σ(Ci × GPi) / ΣCi
+  // Round to 2 decimal places as per KTU norms
   student.SGPA = totalCredits > 0 
-    ? Number((totalCreditPoints / totalCredits).toFixed(2)) 
+    ? Number((totalGradePoints / totalCredits).toFixed(2)) 
     : 0;
 
   // Debug logging
-  console.log(`Student ${student.registerNo}: Total Credit Points = ${totalCreditPoints}, Total Credits = ${totalCredits}, SGPA = ${student.SGPA}`);
+  console.log(`Student ${student.registerNo}: Total Grade Points = ${totalGradePoints}, Total Credits = ${totalCredits}, SGPA = ${student.SGPA}`);
 };
 
 // Function to get failed subjects
@@ -327,80 +162,14 @@ const getFailedSubjects = (student) => {
     .join(", ");
 };
 
-// Modify the isRegularBatch function to handle any batch pattern
-const isRegularBatch = (regNo, batch) => {
-  // Match any college code followed by batch year and department code
-  // Examples: TCR22CS061, LTCR22CS072, TKM22CS123, etc.
-  const match = regNo.match(/(?:[A-Z]+)?([0-9]{2})[A-Z]{2}[0-9]{3}/);
-  if (!match) return false;
-  
-  const studentBatch = Number(match[1]);
-  return studentBatch === batch;
-};
-
-// Modify the extractSemester function to better handle date extraction
-const extractSemester = (pdfText) => {
-  let semester = 'Unknown';
-  let examType = 'Unknown';
-  let examDate = '';
-
-  // Extract semester
-  const semesterPatterns = [
-    /B.Tech S(\d)\s+.*?(Regular|Supplementary)/i,
-    /Semester (\d)/i,
-    /S(\d) /i
-  ];
-
-  for (const pattern of semesterPatterns) {
-    const match = pdfText.match(pattern);
-    if (match) {
-      semester = `S${match[1]}`;
-      break;
-    }
-  }
-
-  // Extract exam type
-  const examTypeMatch = pdfText.match(/(Regular|Supplementary)/i);
-  if (examTypeMatch) {
-    examType = examTypeMatch[1];
-  }
-
-  // Improved date extraction - try multiple date formats
-  const datePatterns = [
-    /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* ?\d{4}/i,  // Month Year
-    /\d{2}[-/]\d{4}/,  // MM/YYYY or MM-YYYY
-    /\d{4}/  // Just the year
-  ];
-
-  for (const pattern of datePatterns) {
-    const match = pdfText.match(pattern);
-    if (match) {
-      examDate = match[0];
-      break;
-    }
-  }
-
-  return {
-    semester,
-    examType,
-    examDate
-  };
-};
-
-// Modify parsePDF function to include batch information
+// Function to parse PDF data
 const parsePDF = async (pdfBuffer) => {
   const data = await pdf(pdfBuffer);
   const lines = data.text.split("\n");
   const departmentData = {};
   let currentStudent = null;
   let processingStudent = false;
-  
-  // Extract semester information with exam type and date
-  const { semester, examType, examDate } = extractSemester(data.text);
-  
-  // Calculate batch if we have semester and date
-  const batch = examDate ? getBatch(semester, examDate) : null;
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
@@ -462,38 +231,18 @@ const parsePDF = async (pdfBuffer) => {
   // Add debug logging
   console.log("Parsed Department Data:", JSON.stringify(departmentData, null, 2));
 
-  // Return both semester and department data
-  return {
-    semester,
-    examType,
-    batch,
-    departmentData
-  };
+  return departmentData;
 };
 
-// Modify generateDepartmentAnalysis to handle regular/supplementary separation
-const generateDepartmentAnalysis = (students, batch) => {
-  // Separate regular and supplementary students
-  const regularStudents = students.filter(student => isRegularBatch(student.registerNo, batch));
-  const supplementaryStudents = students.filter(student => !isRegularBatch(student.registerNo, batch));
-
+// New function to generate department analysis
+const generateDepartmentAnalysis = (students) => {
   const analysis = {
     totalStudents: students.length,
-    regularStudents: regularStudents.length,
-    supplementaryStudents: supplementaryStudents.length,
-    regular: {
-      passCount: 0,
-      failCount: 0,
-      averageSGPA: 0,
-      passPercentage: 0,
-    },
-    overall: {
     passCount: 0,
     failCount: 0,
     averageSGPA: 0,
     topperSGPA: 0,
     topperRegNo: '',
-    },
     gradeDistribution: {
       'S': 0, 'A+': 0, 'A': 0, 'B+': 0, 'B': 0,
       'C+': 0, 'C': 0, 'D': 0, 'P': 0, 'F': 0,
@@ -502,41 +251,24 @@ const generateDepartmentAnalysis = (students, batch) => {
     subjectWiseAnalysis: {}
   };
 
-  // Process regular students
-  let regularTotalSGPA = 0;
-  regularStudents.forEach(student => {
-    regularTotalSGPA += student.SGPA;
-    if (hasFailed(student)) {
-      analysis.regular.failCount++;
-    } else {
-      analysis.regular.passCount++;
-    }
-  });
-
-  // Calculate regular batch statistics
-  if (regularStudents.length > 0) {
-    analysis.regular.averageSGPA = Number((regularTotalSGPA / regularStudents.length).toFixed(2));
-    analysis.regular.passPercentage = Number(((analysis.regular.passCount / regularStudents.length) * 100).toFixed(2));
-  }
-
-  // Process all students for overall analysis
+  // Calculate pass/fail count and average SGPA
   let totalSGPA = 0;
   students.forEach(student => {
     totalSGPA += student.SGPA;
     
     if (hasFailed(student)) {
-      analysis.overall.failCount++;
+      analysis.failCount++;
     } else {
-      analysis.overall.passCount++;
+      analysis.passCount++;
     }
 
     // Track topper
-    if (student.SGPA > analysis.overall.topperSGPA) {
-      analysis.overall.topperSGPA = student.SGPA;
-      analysis.overall.topperRegNo = student.registerNo;
+    if (student.SGPA > analysis.topperSGPA) {
+      analysis.topperSGPA = student.SGPA;
+      analysis.topperRegNo = student.registerNo;
     }
 
-    // Rest of the grade distribution and subject analysis remains the same
+    // Count grades for each subject
     Object.entries(student).forEach(([key, grade]) => {
       if (
         key !== "registerNo" &&
@@ -545,6 +277,7 @@ const generateDepartmentAnalysis = (students, batch) => {
         key !== "FailedSubjects" &&
         key !== "analysis"
       ) {
+        // Initialize subject analysis if not exists
         if (!analysis.subjectWiseAnalysis[key]) {
           analysis.subjectWiseAnalysis[key] = {
             passCount: 0,
@@ -553,6 +286,7 @@ const generateDepartmentAnalysis = (students, batch) => {
           };
         }
 
+        // Update subject-wise analysis
         analysis.subjectWiseAnalysis[key].gradeDistribution[grade]++;
         if (grade === 'F' || grade === 'FE' || grade === 'Absent') {
           analysis.subjectWiseAnalysis[key].failCount++;
@@ -560,219 +294,189 @@ const generateDepartmentAnalysis = (students, batch) => {
           analysis.subjectWiseAnalysis[key].passCount++;
         }
 
+        // Update overall grade distribution
         analysis.gradeDistribution[grade]++;
       }
     });
   });
 
-  analysis.overall.averageSGPA = Number((totalSGPA / students.length).toFixed(2));
+  analysis.averageSGPA = Number((totalSGPA / students.length).toFixed(2));
+  analysis.passPercentage = Number(((analysis.passCount / analysis.totalStudents) * 100).toFixed(2));
 
   return analysis;
 };
 
 // Function to generate Excel file
-const generateExcel = (data) => {
+const generateExcel = (departmentData) => {
   const workbook = xlsx.utils.book_new();
-  const { semester, examType, batch, departmentData } = data;
+
+  // Helper function to create safe sheet names
+  const createSafeSheetName = (deptName, isAnalysis = false) => {
+    // Map of department names to shorter codes
+    const deptCodes = {
+      'COMPUTER SCIENCE & ENGINEERING': 'CSE',
+      'CIVIL ENGINEERING': 'CE',
+      'MECHANICAL ENGINEERING': 'ME',
+      'ELECTRICAL AND ELECTRONICS ENGINEERING': 'EEE',
+      'ELECTRONICS & COMMUNICATION ENGG': 'ECE',
+      'CHEMICAL ENGINEERING': 'CHE',
+      'PRODUCTION ENGINEERING': 'PE',
+      'OTHER': 'OTH'
+    };
+
+    // Get the short code or create one
+    const shortName = deptCodes[deptName] || deptName
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .substring(0, 3);
+
+    // Return appropriate sheet name
+    return isAnalysis ? `${shortName}_A` : shortName;
+  };
 
   Object.entries(departmentData).forEach(([dept, students]) => {
-    try {
-      // Create a safe sheet name
-      const sheetName = dept.substring(0, 31).replace(/[\[\]\*\/\\\?]/g, '');
+    // Generate department analysis
+    const analysis = generateDepartmentAnalysis(students);
+    
+    // Create sheet names and log them
+    const mainSheetName = createSafeSheetName(dept);
+    const analysisSheetName = createSafeSheetName(dept, true);
+    
+    console.log('Sheet names:', {
+      department: dept,
+      mainSheet: mainSheetName,
+      analysisSheet: analysisSheetName
+    });
 
-      // Filter regular and supplementary students
-      const regularStudents = students.filter(student => {
-        const match = student.registerNo.match(/(?:[A-Z]+)?(\d{2})[A-Z]{2}\d{3}/);
-        return match && match[1] === batch.toString();
-      });
-
-      const supplementaryStudents = students.filter(student => {
-        const match = student.registerNo.match(/(?:[A-Z]+)?(\d{2})[A-Z]{2}\d{3}/);
-        return !match || match[1] !== batch.toString();
-      });
-
-    // Get all subject codes
+    // Create main student data sheet
     const subjectCodes = new Set();
-      students.forEach(student => {
-        Object.keys(student).forEach(key => {
-          if (!['registerNo', 'SGPA', 'department', 'FailedSubjects'].includes(key)) {
+    students.forEach((student) => {
+      Object.keys(student).forEach((key) => {
+        if (
+          key !== "registerNo" &&
+          key !== "department" &&
+          key !== "SGPA" &&
+          key !== "FailedSubjects" &&
+          key !== "analysis"
+        ) {
           subjectCodes.add(key);
         }
       });
     });
-      const sortedSubjectCodes = Array.from(subjectCodes).sort();
 
-      // Create worksheet data
-      const wsData = [
-        [`${dept} - ${semester} ${examType} Examination`],
-        [`Regular Batch: 20${batch}`],
-        [],
-        // Regular Students Section
-        ['Regular Students'],
-        ['Register No', ...sortedSubjectCodes, 'SGPA', 'Failed Subjects']
-      ];
+    // Update headers to show credits
+    const headers = ["Register No", 
+      ...Array.from(subjectCodes).map(code => {
+        const credit = SUBJECT_CREDITS[code] || 3;
+        const isNonCredit = NON_CREDIT_COURSES.includes(code);
+        return isNonCredit ? `${code}* (NC)` : `${code} (${credit})`;
+      }), 
+      "SGPA", "Failed Subjects"
+    ];
 
-      // Add regular student data
-      regularStudents.forEach(student => {
+    // Create student data sheet with safe sheet name
+    const data = students.map((student) => {
       const row = [student.registerNo];
-        sortedSubjectCodes.forEach(code => {
-          row.push(student[code] || '-');
-        });
-        row.push(
-          typeof student.SGPA === 'number' ? student.SGPA.toFixed(2) : '-',
-          student.FailedSubjects || '-'
-        );
-        wsData.push(row);
+      Array.from(subjectCodes).forEach((code) => {
+        row.push(student[code] || "-");
       });
+      row.push(student.SGPA, student.FailedSubjects);
+      return row;
+    });
 
-      // Add Regular Batch Analysis
-      const passCount = regularStudents.filter(s => !s.FailedSubjects).length;
-      const avgSGPA = regularStudents.reduce((acc, s) => acc + (s.SGPA || 0), 0) / regularStudents.length;
+    const ws = xlsx.utils.aoa_to_sheet([headers, ...data]);
+    xlsx.utils.book_append_sheet(workbook, ws, mainSheetName);
 
-      wsData.push(
-        [],
-        ['Regular Batch Analysis'],
-        ['Total Regular Students', regularStudents.length],
-        ['Pass Count', passCount],
-        ['Fail Count', regularStudents.length - passCount],
-        ['Pass Percentage', `${((passCount / regularStudents.length) * 100).toFixed(2)}%`],
-        ['Average SGPA', avgSGPA.toFixed(2)],
-        []
-      );
+    // Create analysis sheet with safe sheet name
+    const analysisData = [
+      ["Department Analysis"],
+      ["Total Students", analysis.totalStudents],
+      ["Pass Count", analysis.passCount],
+      ["Fail Count", analysis.failCount],
+      ["Pass Percentage", `${analysis.passPercentage}%`],
+      ["Average SGPA", analysis.averageSGPA],
+      [],
+      ["Toppers (SGPA >= 9.0)"],
+      ["Register No", "SGPA"],
+    ];
 
-      // Add Regular Batch Toppers (SGPA >= 9.0)
-      wsData.push(
-        ['Regular Batch Toppers (SGPA ≥ 9.0)'],
-        ['Register No', 'SGPA', 'Failed Subjects']
-      );
-      regularStudents
-        .filter(s => s.SGPA >= 9.0)
-        .sort((a, b) => b.SGPA - a.SGPA)
-        .forEach(student => {
-          wsData.push([
-            student.registerNo,
-            student.SGPA.toFixed(2),
-            student.FailedSubjects || '-'
-          ]);
-        });
+    // Get all toppers with SGPA >= 9.0
+    const toppers = students
+      .filter(student => student.SGPA >= 9.0)
+      .sort((a, b) => b.SGPA - a.SGPA);  // Sort by SGPA in descending order
 
-      // Add Subject-wise Analysis
-      wsData.push(
-        [],
-        ['Subject-wise Analysis'],
-        ['Subject Code', 'Total Students', 'Pass Count', 'Fail Count', 'Pass Percentage']
-      );
-
-      sortedSubjectCodes.forEach(code => {
-        const studentsWithSubject = regularStudents.filter(s => s[code]);
-        const subjectPassCount = studentsWithSubject.filter(s => 
-          !['F', 'FE', 'Absent'].includes(s[code])
-        ).length;
-        const subjectFailCount = studentsWithSubject.length - subjectPassCount;
-        const passPercentage = (subjectPassCount / studentsWithSubject.length) * 100;
-
-        wsData.push([
-          code,
-          studentsWithSubject.length,
-          subjectPassCount,
-          subjectFailCount,
-          `${passPercentage.toFixed(2)}%`
-        ]);
+    // Add toppers to analysis
+    if (toppers.length > 0) {
+      toppers.forEach(topper => {
+        analysisData.push([topper.registerNo, topper.SGPA]);
       });
-
-      // Add Supplementary Students Section
-      wsData.push(
-        [],
-        ['Supplementary Students'],
-        ['Register No', ...sortedSubjectCodes, 'SGPA', 'Failed Subjects']
-      );
-
-      supplementaryStudents.forEach(student => {
-        const row = [student.registerNo];
-        sortedSubjectCodes.forEach(code => {
-          row.push(student[code] || '-');
-        });
-        row.push(
-          typeof student.SGPA === 'number' ? student.SGPA.toFixed(2) : '-',
-          student.FailedSubjects || '-'
-        );
-        wsData.push(row);
-      });
-
-      // Add Grade Distribution
-      wsData.push(
-        [],
-        ['Grade Distribution (Regular Batch)'],
-        ['Grade', 'Count', 'Percentage']
-      );
-
-      const grades = ['S', 'A+', 'A', 'B+', 'B', 'C+', 'C', 'D', 'P', 'F', 'FE', 'Absent'];
-      const gradeCount = {};
-      let totalGrades = 0;
-
-      regularStudents.forEach(student => {
-        sortedSubjectCodes.forEach(code => {
-          if (student[code]) {
-            gradeCount[student[code]] = (gradeCount[student[code]] || 0) + 1;
-            totalGrades++;
-          }
-        });
-      });
-
-      grades.forEach(grade => {
-        if (gradeCount[grade]) {
-          wsData.push([
-            grade,
-            gradeCount[grade],
-            `${((gradeCount[grade] / totalGrades) * 100).toFixed(2)}%`
-          ]);
-        }
-      });
-
-      // Create worksheet with formatting
-      const ws = xlsx.utils.aoa_to_sheet(wsData);
-
-      // Set column widths
-      ws['!cols'] = [
-        { width: 15 }, // Register No
-        ...sortedSubjectCodes.map(() => ({ width: 10 })), // Subject codes
-        { width: 10 }, // SGPA
-        { width: 30 }  // Failed Subjects
-      ];
-
-      // Add some basic styling
-      for (let i = 0; i < wsData.length; i++) {
-        if (wsData[i][0] && typeof wsData[i][0] === 'string' && 
-            (wsData[i][0].includes('Analysis') || 
-             wsData[i][0].includes('Students') || 
-             wsData[i][0].includes('Toppers') || 
-             wsData[i][0].includes('Distribution'))) {
-          // Make headers bold by using a different cell format
-          const range = xlsx.utils.encode_range({
-            s: { c: 0, r: i },
-            e: { c: wsData[i].length - 1, r: i }
-          });
-          ws['!merges'] = ws['!merges'] || [];
-          ws['!merges'].push(xlsx.utils.decode_range(range));
-        }
-      }
-
-      // Add the worksheet to workbook
-    xlsx.utils.book_append_sheet(workbook, ws, sheetName);
-
-    } catch (error) {
-      console.error(`Error processing department ${dept}:`, error);
+    } else {
+      analysisData.push(["No students with SGPA >= 9.0", ""]);
     }
-  });
 
-  if (workbook.SheetNames.length === 0) {
-    throw new Error('No valid sheets could be generated');
-  }
+    // Add spacing before next section
+    analysisData.push([]);
+    analysisData.push([]);
+
+    // Continue with grade distribution
+    analysisData.push(
+      ["Grade Distribution"],
+      ["Grade", "Count"],
+      ...Object.entries(analysis.gradeDistribution),
+      [],
+      ["Subject-wise Analysis"],
+      ["Subject", "Pass Count", "Fail Count", "Pass %"]
+    );
+
+    // Add subject-wise analysis
+    Object.entries(analysis.subjectWiseAnalysis).forEach(([subject, data]) => {
+      const passPercentage = ((data.passCount / (data.passCount + data.failCount)) * 100).toFixed(2);
+      analysisData.push([
+        subject,
+        data.passCount,
+        data.failCount,
+        `${passPercentage}%`
+      ]);
+    });
+
+    // Add credit information to analysis sheet
+    analysisData.push([]);
+    analysisData.push(["Subject Credits"]);
+    analysisData.push(["Subject", "Credits"]);
+    Array.from(subjectCodes)
+      .filter(code => !NON_CREDIT_COURSES.includes(code))
+      .forEach(code => {
+        analysisData.push([code, SUBJECT_CREDITS[code] || 3]);
+      });
+
+    // Add non-credit courses note
+    analysisData.push([]);
+    analysisData.push(["Note: * indicates non-credit course (NC)"]);
+    analysisData.push(["Non-credit courses:", NON_CREDIT_COURSES.join(", ")]);
+
+    // Add SGPA calculation details to analysis sheet
+    analysisData.push([]);
+    analysisData.push(["SGPA Calculation Details"]);
+    analysisData.push(["Formula: SGPA = Σ(Ci * GPi) / ΣCi"]);
+    analysisData.push(["Where Ci = Course Credits, GPi = Grade Points"]);
+    analysisData.push([]);
+    analysisData.push(["Grade Points Scale"]);
+    analysisData.push(["Grade", "Points"]);
+    Object.entries(GRADE_POINTS)
+      .filter(([grade]) => grade !== 'F' && grade !== 'FE' && grade !== 'I' && grade !== 'Absent')
+      .forEach(([grade, points]) => {
+        analysisData.push([grade, points]);
+      });
+
+    const analysisWs = xlsx.utils.aoa_to_sheet(analysisData);
+    xlsx.utils.book_append_sheet(workbook, analysisWs, analysisSheetName);
+  });
 
   return workbook;
 };
 
-// Add a test endpoint to verify server is running
+// Add a test endpoint at the top of your routes
 app.get('/test', (req, res) => {
   res.json({ message: 'Server is running' });
 });
@@ -781,79 +485,69 @@ app.get('/test', (req, res) => {
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded." });
+      return res.status(400).send("No file uploaded.");
     }
     
     if (!req.file.mimetype || !req.file.mimetype.includes('pdf')) {
-      return res.status(400).json({ error: "Uploaded file must be a PDF." });
+      return res.status(400).send("Uploaded file must be a PDF.");
     }
 
     const pdfBuffer = req.file.buffer;
     
+    let departmentData;
     try {
-      const parsedData = await parsePDF(pdfBuffer);
+      departmentData = await parsePDF(pdfBuffer);
       
       // Validate parsed data
-      if (!parsedData.departmentData || Object.keys(parsedData.departmentData).length === 0) {
+      if (!departmentData || Object.keys(departmentData).length === 0) {
         throw new Error("No valid data could be extracted from the PDF");
       }
 
-      // Send the parsed data as JSON
-      res.json(parsedData);
+      // Check if we have student data
+      const hasStudents = Object.values(departmentData).some(dept => dept.length > 0);
+      if (!hasStudents) {
+        throw new Error("No student records found in the PDF");
+      }
+
+      // Validate each student has required fields
+      Object.values(departmentData).forEach(students => {
+        students.forEach(student => {
+          if (!student.registerNo || !student.department) {
+            throw new Error("Invalid student data found");
+          }
+        });
+      });
 
     } catch (error) {
       console.error("PDF parsing error:", error);
-      res.status(400).json({ error: `Unable to parse PDF file: ${error.message}` });
+      return res.status(400).send(`Unable to parse PDF file: ${error.message}`);
     }
+
+    const workbook = generateExcel(departmentData);
+
+    // Generate a clean filename with date
+    const date = new Date().toISOString().split('T')[0];
+    const fileName = `results_${date}.xlsx`;
+
+    // Set proper headers for Excel file download
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+
+    // Write to buffer and send
+    const buffer = xlsx.write(workbook, { 
+      type: 'buffer',
+      bookType: 'xlsx'
+    });
+
+    // Send the buffer
+    res.send(buffer);
 
   } catch (error) {
     console.error("Error processing PDF:", error);
-    res.status(500).json({ error: `Error processing PDF: ${error.message}` });
+    res.status(500).send(`Error processing PDF: ${error.message}`);
   }
-});
-
-// Modify the Excel generation endpoint
-app.post("/generate-excel", async (req, res) => {
-  try {
-    console.log("Received request for Excel generation");
-    const data = req.body;
-    
-    if (!data || !data.departmentData) {
-      console.error("Invalid data received:", data);
-      return res.status(400).json({ error: "Invalid data provided" });
-    }
-
-    console.log("Generating Excel for semester:", data.semester);
-    const workbook = generateExcel(data);
-
-    // Write to buffer
-    const buffer = xlsx.write(workbook, { 
-      type: 'buffer',
-      bookType: 'xlsx',
-      bookSST: false
-    });
-
-    // Set response headers
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=results_${data.semester}.xlsx`);
-    res.setHeader('Content-Length', buffer.length);
-
-    // Send the buffer
-    res.status(200).send(buffer);
-
-  } catch (error) {
-    console.error("Error generating Excel:", error);
-    res.status(500).json({ error: "Failed to generate Excel file" });
-  }
-});
-
-// Add this after your routes
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    error: 'Something broke!',
-    message: err.message
-  });
 });
 
 // Update the server start to include error handling
